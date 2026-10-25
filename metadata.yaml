@@ -1,5 +1,18 @@
 name: astrbot_plugin_keyword_trigger
+display_name: 关键词触发
+short_desc: 输入关键词即可触发对应指令，无需输入 / 前缀。
 desc: 群内免指令前缀触发其他插件功能的 AstrBot 插件。
-version: 1.0.1
+version: 1.0.2
 author: haoyuedashi
 repo: "https://github.com/haoyuedashi/astrbot_plugin_keyword_trigger"
+astrbot_version: ">=4.0,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - telegram
+  - discord
+  - slack
+  - lark
+  - dingtalk
+  - webchat

@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 虚拟环境
+.venv/
+venv/
+
+# 本地配置与日志
+*.log
