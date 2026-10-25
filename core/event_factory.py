@@ -1,3 +1,4 @@
+import copy
 import time
 from astrbot.api import logger
 from astrbot.api.star import Context
@@ -35,6 +36,7 @@ class EventFactory:
         creator_name: str = None,
         original_components: list = None,
         is_admin: bool = False,
+        original_event: AstrMessageEvent | None = None,
     ) -> AstrMessageEvent:
         """创建事件对象，根据平台类型自动选择正确的事件类
         
@@ -73,11 +75,25 @@ class EventFactory:
         platform_type = self._get_platform_type_from_instance(platform_instance, unified_msg_origin)
         logger.debug(f"create_event: 获取到的平台类型={platform_type}")
 
-        # 创建基础消息对象，传递原始组件
-        msg = self._create_message_object(
-            command, session_id, message_type, creator_id,
-            creator_name, platform_instance, original_components,
-        )
+        # 优先克隆原始事件的消息对象：保留真实 raw_message / message_id /
+        # sender 等。qq_official 发送路径要求 raw_message 是 botpy 的
+        # GroupMessage/C2CMessage 真实消息源，且被动回复 msg_id 必须是
+        # 收到的真实消息 ID（官方限制：5 分钟内有效，每条最多回 5 次）。
+        msg = None
+        original_msg = getattr(original_event, "message_obj", None)
+        if original_event is not None and original_msg is not None:
+            try:
+                msg = self._clone_message_object(original_msg, command, original_components)
+                logger.debug("create_event: 已克隆原始事件消息对象")
+            except Exception as e:
+                logger.warning(f"克隆原始消息对象失败，回退到合成消息: {e}")
+
+        if msg is None:
+            # 创建基础消息对象，传递原始组件
+            msg = self._create_message_object(
+                command, session_id, message_type, creator_id,
+                creator_name, platform_instance, original_components,
+            )
 
         # 创建平台元数据
         meta = PlatformMetadata(platform_type, "command_trigger", platform_id)
@@ -140,6 +156,28 @@ class EventFactory:
             logger.debug(f"获取机器人ID时发生异常: {e}")
 
         return ""
+
+    def _clone_message_object(
+        self,
+        original_msg: AstrBotMessage,
+        command: str,
+        original_components: list = None,
+    ) -> AstrBotMessage:
+        """基于原始消息对象克隆新事件的消息对象。
+
+        仅替换 message_str 与消息链（命令文本 + 原始非文本组件），
+        raw_message、message_id、sender、session_id、group_id、self_id
+        等全部沿用原始消息，保证平台事件发送路径能拿到真实消息源。
+        """
+        msg = copy.copy(original_msg)
+        msg.message_str = command
+        message_chain = [Plain(command)]
+        if original_components:
+            message_chain.extend(original_components)
+        msg.message = message_chain
+        # 防循环标记：on_message 据此跳过自身派发的事件
+        msg.command_trigger_synthetic = True
+        return msg
 
     def _create_message_object(
         self,
@@ -232,7 +270,8 @@ class EventFactory:
             "qq_official": (
                 "astrbot.core.platform.sources.qqofficial.qqofficial_message_event",
                 "QQOfficialMessageEvent",
-                "client",
+                "client",  # 平台实例属性名（adapter 的 botClient 在 self.client）
+                "bot",     # 事件构造参数名：QQOfficialMessageEvent(bot=...)
             ),
             "telegram": (
                 "astrbot.core.platform.sources.telegram.tg_event",
@@ -271,10 +310,11 @@ class EventFactory:
             return self._create_webchat_event(command, msg, meta, session_id)
 
         if platform_name in platform_event_map:
-            module_path, class_name, attr_name = platform_event_map[platform_name]
+            module_path, class_name, attr_name, *rest = platform_event_map[platform_name]
+            kwarg_name = rest[0] if rest else None
             event = self._try_create_platform_event(
                 platform_name, module_path, class_name, attr_name,
-                command, msg, meta, session_id,
+                command, msg, meta, session_id, kwarg_name=kwarg_name,
             )
             if event:
                 return event
@@ -292,8 +332,14 @@ class EventFactory:
         msg: AstrBotMessage,
         meta: PlatformMetadata,
         session_id: str,
+        kwarg_name: str | None = None,
     ) -> AstrMessageEvent | None:
-        """尝试动态导入并创建平台特定事件，失败返回 None"""
+        """尝试动态导入并创建平台特定事件，失败返回 None
+
+        kwarg_name: 事件类构造函数的关键字参数名；None 时沿用 attr_name。
+        平台实例属性名(attr_name)与事件参数名(kwarg_name)可能不同，
+        如 qq_official：属性 self.client，但 QQOfficialMessageEvent(bot=...)。
+        """
         try:
             import importlib
             platform = self._get_platform_instance(meta.id)
@@ -323,7 +369,7 @@ class EventFactory:
                 # wechatpadpro 使用 adapter 参数
                 kwargs["adapter"] = platform
             else:
-                kwargs[attr_name] = getattr(platform, attr_name)
+                kwargs[kwarg_name or attr_name] = getattr(platform, attr_name)
 
             event = event_cls(**kwargs)
 

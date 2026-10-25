@@ -1,5 +1,5 @@
 name: astrbot_plugin_keyword_trigger
 desc: 群内免指令前缀触发其他插件功能的 AstrBot 插件。
-version: 1.0.0
+version: 1.0.1
 author: haoyuedashi
 repo: "https://github.com/haoyuedashi/astrbot_plugin_keyword_trigger"

@@ -109,7 +109,11 @@ class KeywordTriggerPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)  
     async def on_message(self, event: AstrMessageEvent):
         """监听所有消息，匹配关键词后派发新的命令事件"""
-        # 检查是否是我们自己触发的事件（通过 message_id 前缀判断）
+        # 检查是否是我们自己触发的事件（克隆标记 / message_id 前缀双保险）
+        _orig_msg = getattr(event, "message_obj", None)
+        if getattr(_orig_msg, "command_trigger_synthetic", False):
+            logger.debug("[关键词触发] 跳过已触发的事件（synthetic 标记）")
+            return
         message_id = self._get_message_id(event)
         if message_id.startswith("command_trigger_"):
             logger.debug(f"[关键词触发] 跳过已触发的事件: {message_id}")
@@ -170,7 +174,8 @@ class KeywordTriggerPlugin(Star):
                     creator_id=sender_id,
                     creator_name=sender_name,
                     original_components=original_components,
-                    is_admin=is_admin
+                    is_admin=is_admin,
+                    original_event=event
                 )
                 
                 # 将新事件放入事件队列
